@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TorqTrack by INSAIN</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+        .input-form { appearance: none; border-radius: 0.5rem; width: 100%; padding: 0.75rem 1rem; font-size: 1rem; color: #374151; line-height: 1.5; border: 1px solid #D1D5DB; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05); }
+        .input-form:focus { outline: 2px solid transparent; outline-offset: 2px; border-color: #3B82F6; box-shadow: 0 0 0 2px #BFDBFE; }
+        .btn-primary { display: inline-flex; align-items: center; justify-content: center; padding: 0.75rem 1rem; background-color: #2563EB; color: white; font-weight: 600; border-radius: 0.5rem; border: none; cursor: pointer; transition: background-color 0.2s; }
+        .btn-primary:hover { background-color: #1D4ED8; }
+        .animate-fade-in { animation: fadeIn 0.5s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .animate-fade-in-down { animation: fadeInDown 0.5s ease-in-out; }
+        @keyframes fadeInDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <div id="app-container"></div>
+    <div id="modal-container"></div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const appContainer = document.getElementById('app-container');
+        const modalContainer = document.getElementById('modal-container');
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'torqtrack-default-sites';
+        
+        let db, auth;
+        let state = { user: null, loading: true, areas: [], actuators: [], workOrders: [], activeView: 'dashboard', selectedActuatorId: null, openAreaId: null, previousView: 'dashboard' };
+
+        const Icons = {
+            ChevronDown: (isOpen) => `<svg class="w-6 h-6 transform transition-transform ${isOpen ? 'rotate-180' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`,
+            Building: () => `<svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M9 22v-4h6v4M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M8 10h.01M8 14h.01M16 14h.01"/></svg>`,
+            FileText: () => `<svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg>`,
+            Bell: () => `<svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>`,
+            CheckCircle: () => `<svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
+            PlusCircle: () => `<svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="16"/><line x1="8" x2="16" y1="12" y2="12"/></svg>`,
+            LayoutDashboard: () => `<svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>`,
+            LogOut: () => `<svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>`,
+            RefreshCw: () => `<svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v6h6"/><path d="M21 12A9 9 0 0 0 6 5.3L3 8"/><path d="M21 22v-6h-6"/><path d="M3 12a9 9 0 0 0 15 6.7l3-2.7"/></svg>`,
+            Trash2: () => `<svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`,
+            ArrowRightCircle: () => `<svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16l4-4-4-4"/><path d="M8 12h8"/></svg>`,
+            Hash: () => `<svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"></line><line x1="4" y1="15" x2="20" y2="15"></line><line x1="10" y1="3" x2="8" y2="21"></line><line x1="16" y1="3" x2="14" y2="21"></line></svg>`,
+            AlertTriangle: () => `<svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>`,
+            UploadCloud: () => `<svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M12 12v9"/><path d="m16 16-4-4-4 4"/></svg>`,
+            DownloadCloud: () => `<svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M12 12v9"/><path d="m8 17 4 4 4-4"/></svg>`
+        };
+
+        const seedInitialData = async () => {
+            if (!db) return;
+            const areasCollectionRef = collection(db, `artifacts/${appId}/public/data/areas`);
+            const areasSnapshot = await getDocs(areasCollectionRef);
+            if (areasSnapshot.empty) {
+                console.log("Creando datos iniciales...");
+                const areasData = [{ name: 'Planta de Tratamiento' }, { name: 'Generación de Vapor' }];
+                const areaIds = await Promise.all(areasData.map(area => addDoc(areasCollectionRef, area).then(docRef => docRef.id)));
+                const actuatorsCollectionRef = collection(db, `artifacts/${appId}/public/data/actuators`);
+                const actuatorsData = [
+                    { areaId: areaIds[1], tag: 'XV-301-A', model: 'SMB-00', numero_serie: 'SN-C9012', lastMaintenance: new Date('2023-01-10').toISOString(), notes: [{text: 'Falla en torque switch.', author: 'usuario2', date: new Date().toISOString(), isImportant: true}], documents: [], spareParts: { toRequest: ['Tarjeta de control'], requested: [], inStock: [] } },
+                    { areaId: areaIds[0], tag: 'XV-101', model: 'L120-10', numero_serie: 'SN-A1234', lastMaintenance: new Date('2023-08-15').toISOString(), notes: [{text: 'Revisión trimestral OK.', author: 'usuario1', date: new Date().toISOString(), isImportant: false}], documents: [{name: 'Manual_L120.pdf', url:'#'}], spareParts: { toRequest: [], requested: ['O-Ring Kit'], inStock: ['Fusible 5A'] } },
+                ];
+                await Promise.all(actuatorsData.map(actuator => addDoc(actuatorsCollectionRef, actuator)));
+                const workOrdersCollectionRef = collection(db, `artifacts/${appId}/public/data/workOrders`);
+                await addDoc(workOrdersCollectionRef, { actuatorId: 'some-id', actuatorTag: 'XV-301-A', description: 'Revisar motor, presenta vibración excesiva.', status: 'pendiente', createdAt: new Date().toISOString() });
+            }
+        };
+
+        // --- RENDER FUNCTIONS ---
+        function renderApp() {
+            if (state.loading) { appContainer.innerHTML = `<div class="flex justify-center items-center h-screen">Cargando...</div>`; return; }
+            if (!state.user) { appContainer.innerHTML = renderLogin(); attachLoginHandler(); return; }
+            appContainer.innerHTML = renderMainLayout();
+            renderCurrentView();
+        }
+
+        function renderMainLayout() {
+            const hasPendingWO = state.workOrders.some(wo => wo.status === 'pendiente');
+            const menuItems = [ { view: 'dashboard', label: 'Dashboard', icon: Icons.LayoutDashboard }, { view: 'areas', label: 'Áreas y Actuadores', icon: Icons.Building }, { view: 'workorders', label: 'Trabajos Pendientes', icon: Icons.Bell }, { view: 'reports', label: 'Reportes', icon: Icons.FileText }];
+            return `
+                <div class="flex h-screen bg-gray-100 font-sans">
+                    <nav class="w-64 bg-white shadow-lg flex flex-col flex-shrink-0">
+                        <div class="p-4 border-b border-gray-200"><h1 class="text-2xl font-bold text-blue-800">TorqTrack</h1><p class="text-sm text-gray-500">by INSAIN</p></div>
+                        <ul id="nav-menu" class="flex-1 mt-4">
+                            ${menuItems.map(item => {
+                                const isActive = state.activeView === item.view || (item.view === 'areas' && state.activeView === 'actuatorDetail');
+                                return `<li class="px-4 py-3 cursor-pointer relative ${isActive ? 'bg-blue-100 border-l-4 border-blue-600 text-blue-700 font-bold' : 'text-gray-600 hover:bg-gray-100'}" data-action="navigate" data-view="${item.view}">
+                                    <div class="flex items-center pointer-events-none">
+                                      <span class="${item.view === 'workorders' && hasPendingWO ? 'text-yellow-500' : ''}">${item.icon()}</span>
+                                      <span class="ml-3">${item.label}</span>
+                                      ${item.view === 'workorders' && hasPendingWO ? '<span class="absolute right-4 top-1/2 -translate-y-1/2 w-3 h-3 bg-yellow-400 rounded-full animate-pulse"></span>' : ''}
+                                    </div>
+                                </li>`;
+                            }).join('')}
+                        </ul>
+                        <div class="p-4 border-t border-gray-200"><p class="text-sm text-gray-700">Usuario: <span class="font-bold">${state.user.username}</span></p><p class="text-xs text-gray-500">Rol: ${state.user.role}</p><button data-action="logout" class="w-full mt-4 text-left text-red-500 hover:text-red-700 font-semibold flex items-center">${Icons.LogOut()}<span class="ml-2">Cerrar Sesión</span></button></div>
+                    </nav>
+                    <main id="main-content" class="flex-1 overflow-y-auto"></main>
+                </div>`;
+        }
+        
+        function renderCurrentView() {
+            const mainContent = document.getElementById('main-content');
+            if (!mainContent) return;
+            switch(state.activeView) {
+                case 'dashboard': mainContent.innerHTML = renderDashboardView(); break;
+                case 'areas': mainContent.innerHTML = renderAreasView(); break;
+                case 'workorders': mainContent.innerHTML = renderWorkOrdersView(); break;
+                case 'reports': mainContent.innerHTML = renderReportView(); break;
+                case 'actuatorDetail': mainContent.innerHTML = renderActuatorDetailView(); break;
+                default: mainContent.innerHTML = renderDashboardView();
+            }
+        }
+        
+        function renderLogin() {
+            return `<div class="min-h-screen bg-gradient-to-br from-blue-700 to-blue-900 flex flex-col justify-center items-center p-4"><div class="text-center mb-8"><h1 class="text-4xl sm:text-5xl font-bold text-white">TorqTrack</h1><p class="text-blue-200 text-lg">by INSAIN</p></div><div class="w-full max-w-sm bg-white rounded-xl shadow-2xl p-8"><h2 class="text-2xl font-bold text-center text-gray-800 mb-6">Iniciar Sesión</h2><form id="login-form"><div class="mb-4"><label class="block text-gray-700 text-sm font-bold mb-2" for="username">Usuario</label><input id="username" type="text" class="input-form" placeholder="usuario1" /></div><div class="mb-6"><label class="block text-gray-700 text-sm font-bold mb-2" for="password">Contraseña</label><input id="password" type="password" class="input-form" placeholder="pass1" /></div><p id="login-error" class="text-red-500 text-xs italic mb-4"></p><button type="submit" class="w-full btn-primary">Acceder</button></form></div><div class="text-center text-blue-200 text-xs mt-4 p-4 bg-black bg-opacity-20 rounded-lg"><p>Usuarios de prueba:</p><p><b>usuario1</b> / pass1 (Admin)</p><p><b>usuario2</b> / pass2 (Visor)</p><p><b>usuario3</b> / pass3 (Visor)</p></div></div>`;
+        }
+
+        function renderDashboardView() {
+            const pendingWorkOrdersCount = state.workOrders.filter(wo => wo.status === 'pendiente').length;
+            const { chartData } = getMaintenanceStatus();
+            let conicGradientParts = []; let accumulatedPercentage = 0;
+            if (state.actuators.length > 0) { chartData.forEach(d => { const p = (d.value/state.actuators.length)*100; if(p>0){ conicGradientParts.push(`${d.color} ${accumulatedPercentage}% ${accumulatedPercentage+p}%`); accumulatedPercentage+=p;}}); }
+            const conicGradient = chartData.length > 0 ? `background: conic-gradient(${conicGradientParts.join(', ')});` : 'background: #e5e7eb;';
+            return `<div class="p-4 sm:p-6"><h1 class="text-3xl font-bold text-gray-800 mb-6">Dashboard</h1><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"><div class="p-6 bg-white rounded-xl shadow-md cursor-pointer hover:shadow-lg transition-shadow" data-action="navigate" data-view="areas"><h2 class="text-xl font-bold text-gray-700">Resumen de Planta</h2><div class="mt-4 text-center"><p class="text-5xl font-bold text-blue-600">${state.actuators.length}</p><p class="text-gray-500">Actuadores en</p><p class="text-3xl font-semibold text-blue-500">${state.areas.length}</p><p class="text-gray-500">Áreas</p></div><p class="text-center text-blue-600 mt-4 font-semibold">Ver detalles &rarr;</p></div><div class="p-6 bg-white rounded-xl shadow-md cursor-pointer hover:shadow-lg transition-shadow" data-action="navigate" data-view="reports"><h2 class="text-xl font-bold text-gray-700 mb-2">Reporte Rápido</h2><div class="w-40 h-40 mx-auto rounded-full flex items-center justify-center" style="${conicGradient}"><div class="w-20 h-20 bg-white rounded-full"></div></div><p class="text-center text-blue-600 mt-2 font-semibold">Ver reporte completo &rarr;</p></div><div class="p-6 bg-white rounded-xl shadow-md cursor-pointer hover:shadow-lg transition-shadow" data-action="navigate" data-view="workorders"><h2 class="text-xl font-bold text-gray-700">Trabajos Pendientes</h2><div class="text-center my-4"><p class="text-6xl font-bold text-yellow-500">${pendingWorkOrdersCount}</p><p class="text-gray-500">Órdenes de trabajo activas</p></div><p class="text-center text-blue-600 font-semibold">Gestionar trabajos &rarr;</p></div></div></div>`;
+        }
+        
+        function renderWorkOrdersView() {
+            const pendingWorkOrders = state.workOrders.filter(wo => wo.status === 'pendiente');
+            return `<div class="p-4 sm:p-6"><h1 class="text-3xl font-bold text-gray-800 mb-6">Trabajos Pendientes</h1><div class="bg-white p-6 rounded-xl shadow-md"><div class="space-y-3 max-h-[75vh] overflow-y-auto">${pendingWorkOrders.length > 0 ? pendingWorkOrders.map(wo => `<div key="${wo.id}" class="bg-yellow-50 border-l-4 border-yellow-400 p-3 rounded-r-lg"><p class="font-bold">${wo.actuatorTag}</p><p class="text-gray-600 text-sm my-1">${wo.description}</p><div class="flex justify-between items-center mt-2"><p class="text-xs text-gray-400">Creado: ${new Date(wo.createdAt).toLocaleDateString()}</p><button data-action="finishWorkOrder" data-id="${wo.id}" class="bg-green-500 text-white px-3 py-1 rounded-md text-sm font-semibold hover:bg-green-600 flex items-center">${Icons.CheckCircle()}<span class="ml-1">Finalizar</span></button></div></div>`).join('') : `<p class="text-gray-500">No hay trabajos pendientes. ¡Buen trabajo!</p>`}</div></div></div>`;
+        }
+
+        window.renderAreasView = function() {
+            const isAdmin = state.user.role === 'admin';
+            return `<div class="p-4 sm:p-6"><div class="flex justify-between items-center mb-6"><h1 class="text-3xl font-bold text-gray-800">Áreas de la Planta</h1>${isAdmin ? `<button data-action="openModal" data-type="addArea" class="btn-primary">${Icons.PlusCircle()} <span class="ml-2">Añadir Área</span></button>` : ''}</div><div class="space-y-4">${state.areas.map(area => { const actuatorsInArea = state.actuators.filter(a => a.areaId === area.id); const isOpen = state.openAreaId === area.id; return `<div class="bg-white rounded-xl shadow-md overflow-hidden"><div class="w-full text-left p-4 flex justify-between items-center bg-white"><button data-action="toggleArea" data-id="${area.id}" class="flex items-center">${Icons.Building()} <span class="ml-3 text-xl font-semibold text-gray-700">${area.name}</span> ${Icons.ChevronDown(isOpen)}</button>${isAdmin ? `<button data-action="openModal" data-type="addActuator" data-id="${area.id}" class="text-sm bg-blue-100 text-blue-700 hover:bg-blue-200 px-3 py-1 rounded-lg font-semibold">Añadir Actuador</button>` : ''}</div>${isOpen ? `<div class="p-4 border-t border-gray-200 animate-fade-in-down">${actuatorsInArea.length > 0 ? actuatorsInArea.map(actuator => `<div data-action="selectActuator" data-id="${actuator.id}" class="p-3 rounded-lg hover:bg-blue-50 cursor-pointer"><div class="flex justify-between items-center mb-2"><p class="font-bold text-gray-800">${actuator.tag}</p><p class="text-sm text-gray-500">${actuator.model}</p></div>${getMaintenanceUrgencyBar(actuator.lastMaintenance)}</div>`).join('') : `<p class="text-center text-gray-500 py-4">No hay actuadores en esta área.</p>`}</div>` : ''}</div>`; }).join('')}</div></div>`;
+        };
+        
+        window.renderReportView = function() {
+            const { reportByArea, chartData } = getMaintenanceStatus();
+            let conicGradientParts = []; let accumulatedPercentage = 0;
+            if (state.actuators.length > 0) { chartData.forEach(d => { const p = (d.value/state.actuators.length)*100; if(p>0){ conicGradientParts.push(`${d.color} ${accumulatedPercentage}% ${accumulatedPercentage+p}%`); accumulatedPercentage+=p;}}); }
+            const conicGradient = chartData.length > 0 ? `background: conic-gradient(${conicGradientParts.join(', ')});` : 'background: #e5e7eb;';
+            return `<div class="p-4 sm:p-6"><h1 class="text-3xl font-bold text-gray-800 mb-6">Reporte de Mantenimiento Mayor</h1>
+                <div class="bg-white p-6 rounded-xl shadow-md mb-6"><h2 class="text-xl font-bold text-gray-700 mb-4 text-center">Resumen General</h2><div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-center"><div class="w-48 h-48 mx-auto rounded-full flex items-center justify-center" style="${conicGradient}"><div class="w-24 h-24 bg-white rounded-full flex items-center justify-center text-center"><span class="text-2xl font-bold">${state.actuators.length}</span><span class="text-sm text-gray-500 ml-1">Total</span></div></div><div class="flex flex-col justify-center space-y-2">${chartData.map(d => `<div class="flex items-center text-sm"><div class="w-3 h-3 rounded-full mr-2" style="background-color: ${d.color};"></div><span>${d.name}: ${d.value} (${(state.actuators.length>0?(d.value/state.actuators.length)*100:0).toFixed(1)}%)</span></div>`).join('')}</div></div></div>
+                <div class="space-y-6">${reportByArea.map(area => `<div class="bg-white rounded-xl shadow-md p-4"><h2 class="text-2xl font-bold text-blue-800 border-b pb-2 mb-4">${area.name}</h2><div class="space-y-4">${area.actuators.length > 0 ? area.actuators.map(actuator => `
+                <div class="border-l-8 rounded-lg p-3 grid grid-cols-1 md:grid-cols-3 gap-4 shadow-sm bg-gray-50" style="border-left-color: ${actuator.status.color};">
+                    <div class="md:col-span-1 border-r-0 md:border-r pr-0 md:pr-4"><button data-action="selectActuator" data-id="${actuator.id}" class="font-bold text-lg text-blue-700 hover:underline">${actuator.tag}</button><p class="text-gray-600">${actuator.model}</p><p class="text-sm text-gray-400 flex items-center mt-1">${Icons.Hash()} <span class="ml-2">${actuator.numero_serie || 'N/A'}</span></p><div class="mt-2 text-sm"><span class="font-bold">Último Mtto:</span> ${actuator.lastMaintenance ? new Date(actuator.lastMaintenance).toLocaleDateString() : 'N/A'}</div><div class="mt-1 flex items-center font-semibold text-sm" style="color: ${actuator.status.color};"> <div class="w-3 h-3 rounded-full mr-2" style="background-color: ${actuator.status.color};"></div> ${actuator.status.name} ${actuator.status.diffDays != null ? `(${actuator.status.diffDays} días)` : ''}</div></div>
+                    <div class="md:col-span-1 border-r-0 md:border-r pr-0 md:pr-4 text-sm"><h4 class="font-bold mb-1">Refacciones</h4><div><span class="font-semibold text-blue-800">Por Solicitar:</span> ${actuator.spareParts?.toRequest?.join(', ') || 'Ninguna'}</div><div><span class="font-semibold text-orange-600">Solicitadas:</span> ${actuator.spareParts?.requested?.join(', ') || 'Ninguna'}</div><div><span class="font-semibold text-green-600">En Stock:</span> ${actuator.spareParts?.inStock?.join(', ') || 'Ninguna'}</div></div>
+                    <div class="md:col-span-1 text-sm"><h4 class="font-bold mb-1">Notas Importantes</h4><div class="space-y-2">${(actuator.notes?.filter(n => n.isImportant).length > 0) ? actuator.notes.filter(n => n.isImportant).map(note => `<div><p class="text-gray-800">"${note.text}"</p><p class="text-xs text-gray-500 text-right">- ${note.author}</p></div>`).join('') : '<p class="text-gray-400">Ninguna</p>'}</div></div>
+                </div>`).join('') : '<p class="text-center text-gray-500 py-4">No hay actuadores en esta área.</p>'}</div></div>`).join('')}</div></div>`;
+        };
+
+        window.renderActuatorDetailView = function() {
+            const actuator = state.actuators.find(a => a.id === state.selectedActuatorId);
+            if (!actuator) { setTimeout(() => navigate('areas'), 50); return `<div class="p-6">Actuador no encontrado. Volviendo...</div>`; }
+            const isAdmin = state.user.role === 'admin';
+            return `<div class="p-4 sm:p-6 bg-gray-50 min-h-full animate-fade-in">
+                <button data-action="navigate" data-view="${state.previousView}" class="mb-4 text-blue-600 hover:text-blue-800 font-semibold">&larr; Volver</button>
+                <div class="bg-white p-6 rounded-xl shadow-md">
+                    <div class="flex justify-between items-start"><div><h2 class="text-2xl font-bold text-gray-800">${actuator.tag}</h2><p class="text-gray-500">${actuator.model}</p><p class="text-sm text-gray-400 flex items-center mt-1">${Icons.Hash()} <span class="ml-2">${actuator.numero_serie || 'N/A'}</span></p></div>${isAdmin ? `<button data-action="openModal" data-type="editActuator" data-id="${actuator.id}" class="bg-blue-100 text-blue-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-200">Editar</button>` : ''}</div>
+                    <div class="my-6 space-y-3">${getMaintenanceUrgencyBar(actuator.lastMaintenance)}${isAdmin ? `<div class="flex justify-end"><button data-action="openModal" data-type="resetMaintenance" data-id="${actuator.id}" class="flex items-center bg-blue-500 text-white px-3 py-1 rounded-lg text-sm font-semibold hover:bg-blue-600">${Icons.RefreshCw()}<span class="ml-2">Restablecer Mtto. Mayor</span></button></div>` : ''}</div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                        <div class="bg-gray-50 p-4 rounded-lg"><div class="flex justify-between items-center mb-3"><h3 class="font-bold text-gray-700">Notas</h3><button data-action="openModal" data-type="addNote" data-id="${actuator.id}" class="flex items-center text-blue-600 hover:text-blue-800 text-sm">${Icons.PlusCircle()} <span class="ml-1">Añadir</span></button></div><div class="space-y-2 max-h-48 overflow-y-auto pr-2">${actuator.notes && actuator.notes.length > 0 ? [...actuator.notes].reverse().map(n => `<div class="p-2 rounded shadow-sm text-sm group ${n.isImportant ? 'bg-yellow-100 border-l-4 border-yellow-400' : 'bg-white'}"><div class="flex justify-between items-start"><div>${n.isImportant ? `<div class="flex items-center text-yellow-600 font-bold text-xs mb-1">${Icons.AlertTriangle()} <span class="ml-1">Importante</span></div>` : ''}<p>${n.text}</p><p class="text-xs text-gray-400 text-right mt-1">- ${n.author} @ ${new Date(n.date).toLocaleString()}</p></div>${isAdmin ? `<button data-action="deleteNote" data-id="${actuator.id}" data-date="${n.date}" class="text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">${Icons.Trash2()}</button>` : ''}</div></div>`).join('') : `<p class="text-sm text-gray-400">No hay notas.</p>`}</div></div>
+                        <div class="bg-gray-50 p-4 rounded-lg"><div class="flex justify-between items-center mb-3"><h3 class="font-bold text-gray-700">Refacciones</h3>${isAdmin ? `<button data-action="openModal" data-type="addSparePart" data-id="${actuator.id}" class="flex items-center text-blue-600 hover:text-blue-800 text-sm">${Icons.PlusCircle()} <span class="ml-1">Añadir</span></button>` : ''}</div><div class="text-sm space-y-3">${(['toRequest', 'requested', 'inStock']).map(key => { const titles = { toRequest: 'Para Solicitar', requested: 'Solicitadas', inStock: 'En Stock' }; const colors = { toRequest: 'text-blue-800', requested: 'text-orange-600', inStock: 'text-green-600' }; const parts = actuator.spareParts?.[key] || []; return `<div key="${key}"><h4 class="font-semibold ${colors[key]}">${titles[key]}:</h4><ul class="list-inside text-gray-600">${parts.length > 0 ? parts.map(p => `<li class="flex justify-between items-center group hover:bg-gray-100 px-1 rounded"><span>• ${p}</span>${isAdmin ? `<div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">${key !== 'inStock' ? `<button data-action="moveSparePart" data-id="${actuator.id}" data-params='${JSON.stringify({part: p, from: key, to: key === 'toRequest' ? 'requested' : 'inStock'})}' class="text-green-500">${Icons.ArrowRightCircle()}</button>`:''}<button data-action="deleteSparePart" data-id="${actuator.id}" data-params='${JSON.stringify({part: p, from: key})}' class="text-red-500">${Icons.Trash2()}</button></div>`:''}</li>`).join('') : `<span class="text-gray-400 ml-2">Ninguna</span>`}</ul></div>`;}).join('')}</div></div>
+                        <div class="bg-gray-50 p-4 rounded-lg"><div class="flex justify-between items-center mb-3"><h3 class="font-bold text-gray-700">Órdenes de Trabajo</h3>${isAdmin ? `<button data-action="openModal" data-type="addWorkOrder" data-id="${actuator.id}" class="flex items-center text-blue-600 hover:text-blue-800 text-sm">${Icons.PlusCircle()} <span class="ml-1">Añadir OT</span></button>` : ''}</div><p class="text-sm text-gray-400">Ver en panel de Trabajos Pendientes.</p></div>
+                        <div class="bg-gray-50 p-4 rounded-lg"><div class="flex justify-between items-center mb-3"><h3 class="font-bold text-gray-700">Documentos Técnicos</h3>${isAdmin ? `<button data-action="openModal" data-type="addDocument" data-id="${actuator.id}" class="flex items-center text-blue-600 hover:text-blue-800 text-sm">${Icons.UploadCloud()} <span class="ml-1">Subir</span></button>`:''}</div><div class="space-y-1 mt-2">${(actuator.documents || []).map(doc => `<div class="flex justify-between items-center group text-sm"><a href="${doc.url || '#'}" target="_blank" class="flex items-center text-gray-600 hover:text-blue-600">${Icons.DownloadCloud()} <span class="ml-2">${doc.name}</span></a>${isAdmin ? `<button data-action="deleteDocument" data-id="${actuator.id}" data-name="${doc.name}" class="text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">${Icons.Trash2()}</button>`:''}</div>`).join('') || '<p class="text-sm text-gray-400">No hay documentos.</p>'}</div></div>
+                    </div>
+                </div>
+            </div>`;
+        };
+
+        // --- HANDLERS & LOGIC ---
+        function attachMainHandlers(){ document.body.addEventListener('click', handleGlobalClick); }
+        function attachLoginHandler() { if (document.getElementById('login-form')) document.getElementById('login-form').addEventListener('submit', handleLoginSubmit); };
+        function handleGlobalClick(e){
+            let target = e.target.closest('[data-action]');
+            if (!target) return;
+            const { action, id, view, type, params, date, name } = target.dataset;
+            if (action !== 'stop-propagation') e.preventDefault();
+            if (action === 'closeModal' && e.target !== target) return; 
+
+            const actionHandlers = {
+                navigate: () => navigate(view, id), logout: () => handleLogout(), finishWorkOrder: () => handleFinishWorkOrder(id),
+                toggleArea: () => toggleArea(id), selectActuator: () => handleSelectActuator(id), openModal: () => openModal(type, id),
+                closeModal: () => closeModal(), addArea: () => handleAddArea(), addActuator: () => handleAddActuator(id),
+                updateActuator: () => handleUpdateActuator(id), resetMaintenance: () => handleResetMaintenance(id),
+                addNote: () => handleAddNote(id), deleteNote: () => handleDeleteNote(id, date), addSparePart: () => handleAddSparePart(id),
+                moveSparePart: () => handleMoveSparePart(id, JSON.parse(params)), deleteSparePart: () => handleDeleteSparePart(id, JSON.parse(params)),
+                addWorkOrder: () => handleAddWorkOrder(id), addDocument: () => handleAddDocument(id), deleteDocument: () => handleDeleteDocument(id, name)
+            };
+            if(actionHandlers[action]) actionHandlers[action]();
+        }
+        function handleLoginSubmit(e){
+            if(e) e.preventDefault();
+            const username = document.getElementById('username').value, password = document.getElementById('password').value, errorEl = document.getElementById('login-error');
+            errorEl.textContent = '';
+            const validUsers = { 'usuario1': { role: 'admin' }, 'usuario2': { role: 'viewer' }, 'usuario3': { role: 'viewer' } };
+            if (validUsers[username] && password === `pass${username.slice(-1)}`) { state.user = { username, role: validUsers[username].role }; state.activeView = 'dashboard'; renderApp(); }
+            else { errorEl.textContent = 'Usuario o contraseña incorrectos.'; }
+        };
+        function navigate(view, id = null) { if (view !== 'actuatorDetail') state.previousView = state.activeView; state.activeView = view; state.selectedActuatorId = id; renderApp(); };
+        function handleLogout() { state.user = null; renderApp(); };
+        async function handleFinishWorkOrder(id) { if(!db) return; await updateDoc(doc(db, `artifacts/${appId}/public/data/workOrders`, id), { status: 'completado' }); };
+        function toggleArea(id) { state.openAreaId = state.openAreaId === id ? null : id; renderCurrentView(); };
+        function handleSelectActuator(id) { navigate('actuatorDetail', id); };
+        
+        const getMaintenanceUrgencyBar = (lastMaint) => {
+            if (!lastMaint) return `<div class="text-sm text-gray-500">Sin datos de Mtto.</div>`;
+            const diffDays = Math.ceil((new Date() - new Date(lastMaint)) / (1000 * 60 * 60 * 24));
+            const twoYearsInDays = 730, percentage = Math.min(Math.round((diffDays / twoYearsInDays) * 100), 150);
+            let color = 'bg-green-500', label = `Normal (${diffDays} días)`;
+            if (diffDays >= twoYearsInDays) { color = 'bg-red-600'; label = `Vencido (${diffDays} días)`; }
+            else if (diffDays >= 670) { color = 'bg-orange-500'; label = `Próximo (${diffDays} días)`; }
+            else if (diffDays >= 365) { color = 'bg-yellow-400'; label = `Programar (${diffDays} días)`; }
+            return `<div class="w-full"><div class="flex justify-between mb-1 text-sm text-gray-600"><span>Mtto. Mayor</span><span class="font-semibold">${label}</span></div><div class="w-full bg-gray-200 rounded-full h-4"><div class="${color} h-4 rounded-full" style="width: ${Math.min(percentage, 100)}%;"></div></div></div>`;
+        };
+        const getMaintenanceStatus = () => {
+            const statusConfig = { vencido: { name: 'Vencido', color: '#DC2626', minDays: 730, maxDays: Infinity }, proximo: { name: 'Próximo', color: '#F97316', minDays: 670, maxDays: 729 }, programar: { name: 'Programar', color: '#FBBF24', minDays: 365, maxDays: 669 }, normal: { name: 'Normal', color: '#22C55E', minDays: 0, maxDays: 364 }, sinDatos: { name: 'Sin Datos', color: '#9CA3AF' }};
+            const getStatus = (lastMaint) => {
+                if (!lastMaint) return { ...statusConfig.sinDatos, diffDays: null };
+                const diffDays = Math.ceil((new Date() - new Date(lastMaint)) / (1000 * 60 * 60 * 24));
+                for (const key in statusConfig) { if (key !== 'sinDatos' && diffDays >= statusConfig[key].minDays && diffDays <= statusConfig[key].maxDays) return { ...statusConfig[key], diffDays }; }
+                return { ...statusConfig.normal, diffDays };
+            };
+            const reportByArea = state.areas.map(area => ({ ...area, actuators: state.actuators.filter(a => a.areaId === area.id).map(a => ({...a, status: getStatus(a.lastMaintenance)})) }));
+            const chartData = Object.values(statusConfig).map(s => ({ name: s.name, value: state.actuators.filter(a => getStatus(a.lastMaintenance).name === s.name).length, color: s.color })).filter(d => d.value > 0);
+            return { reportByArea, chartData };
+        };
+
+        function openModal(type, id = null) {
+            modalContainer.innerHTML = `<div class="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center animate-fade-in" data-action="closeModal"><div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md m-4" data-action="stop-propagation"><div id="modal-content"></div></div></div>`;
+            const modalContent = document.getElementById('modal-content');
+            let content = '', title = '';
+            const actuator = id ? state.actuators.find(a => a.id === id) : null;
+            switch(type){
+                case 'addArea': title = 'Añadir Nueva Área'; content = `<div><label class="block text-sm font-medium text-gray-700">Nombre del Área</label><input id="newAreaName" type="text" class="input-form" placeholder="Ej: Compresores"/></div><button data-action="addArea" class="w-full mt-4 btn-primary">Guardar Área</button>`; break;
+                case 'addActuator': title = 'Añadir Nuevo Actuador'; content = `<div class="space-y-4"><div><label>TAG</label><input id="newActuatorTag" type="text" class="input-form"/></div><div><label>Modelo</label><input id="newActuatorModel" type="text" class="input-form"/></div><div><label>Número de Serie</label><input id="newActuatorSerial" type="text" class="input-form"/></div><button data-action="addActuator" data-id="${id}" class="w-full mt-4 btn-primary">Guardar</button></div>`; break;
+                case 'editActuator': title = 'Editar Actuador'; content = `<div class="space-y-4"><div><label>TAG</label><input id="editActuatorTag" type="text" class="input-form" value="${actuator.tag}"/></div><div><label>Modelo</label><input id="editActuatorModel" type="text" class="input-form" value="${actuator.model}"/></div><div><label>Número de Serie</label><input id="editActuatorSerial" type="text" class="input-form" value="${actuator.numero_serie || ''}"/></div><button data-action="updateActuator" data-id="${id}" class="w-full mt-4 btn-primary">Guardar Cambios</button></div>`; break;
+                case 'resetMaintenance': title = 'Confirmar Acción'; content = `<p>¿Estás seguro de que deseas restablecer la fecha del mantenimiento mayor?</p><div class="flex justify-end gap-4 mt-6"><button data-action="closeModal" class="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 font-semibold">Cancelar</button><button data-action="resetMaintenance" data-id="${id}" class="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-semibold">Confirmar</button></div>`; break;
+                case 'addNote': title = 'Añadir Nota'; content = `<textarea id="newNoteText" rows="4" class="input-form" placeholder="Escribe tu nota..."></textarea><div class="mt-2 flex items-center"><input type="checkbox" id="newNoteImportant" class="h-4 w-4"/><label for="newNoteImportant" class="ml-2 block text-sm">Marcar como importante</label></div><button data-action="addNote" data-id="${id}" class="w-full mt-4 btn-primary">Añadir</button>`; break;
+                case 'addSparePart': title = 'Añadir Refacción'; content = `<input id="newSparePartName" type="text" class="input-form" placeholder="Nombre de la refacción"/><button data-action="addSparePart" data-id="${id}" class="w-full mt-4 btn-primary">Añadir</button>`; break;
+                case 'addWorkOrder': title = 'Añadir Orden de Trabajo'; content = `<textarea id="newWorkOrderDesc" rows="4" class="input-form" placeholder="Descripción del trabajo..."></textarea><button data-action="addWorkOrder" data-id="${id}" class="w-full mt-4 btn-primary">Crear OT</button>`; break;
+                case 'addDocument': title = 'Subir Documento'; content = `<input id="newDocName" type="text" class="input-form" placeholder="Nombre del documento"/><p class="text-xs text-gray-500 mt-1">Nota: Esto no sube el archivo, solo guarda el nombre como referencia.</p><button data-action="addDocument" data-id="${id}" class="w-full mt-4 btn-primary">Guardar Referencia</button>`; break;
+            }
+            modalContent.innerHTML = `<div class="flex justify-between items-center mb-4"><h3 class="text-xl font-bold text-gray-800">${title}</h3><button data-action="closeModal" class="text-gray-500 hover:text-gray-800 text-2xl font-bold">&times;</button></div>${content}`;
+        };
+        function closeModal() { modalContainer.innerHTML = ''; };
+        async function handleAddArea() { const name = document.getElementById('newAreaName').value; if(name.trim() && db) { await addDoc(collection(db, `artifacts/${appId}/public/data/areas`), { name: name.trim() }); closeModal(); } };
+        async function handleAddActuator(areaId) { const tag = document.getElementById('newActuatorTag').value, model = document.getElementById('newActuatorModel').value, numero_serie = document.getElementById('newActuatorSerial').value; if(tag.trim() && model.trim() && areaId && db){ await addDoc(collection(db, `artifacts/${appId}/public/data/actuators`), { areaId, tag, model, numero_serie, lastMaintenance: null, notes: [], spareParts: { toRequest: [], requested: [], inStock: [] } }); closeModal(); } };
+        async function handleUpdateActuator(id) { const actuatorRef = doc(db, `artifacts/${appId}/public/data/actuators`, id); await updateDoc(actuatorRef, { tag: document.getElementById('editActuatorTag').value, model: document.getElementById('editActuatorModel').value, numero_serie: document.getElementById('editActuatorSerial').value }); closeModal(); };
+        async function handleResetMaintenance(id) { await updateDoc(doc(db, `artifacts/${appId}/public/data/actuators`, id), { lastMaintenance: new Date().toISOString() }); closeModal(); };
+        async function handleAddNote(id) { const actuator = state.actuators.find(a => a.id === id); const text = document.getElementById('newNoteText').value; const isImportant = document.getElementById('newNoteImportant').checked; if (text.trim()){ const newNotes = [...(actuator.notes || []), { text, isImportant, author: state.user.username, date: new Date().toISOString() }]; await updateDoc(doc(db, `artifacts/${appId}/public/data/actuators`, id), { notes: newNotes }); closeModal(); }};
+        async function handleDeleteNote(id, date) { if (confirm('¿Seguro que quieres borrar esta nota?')) { const actuator = state.actuators.find(a => a.id === id); const newNotes = actuator.notes.filter(n => n.date !== date); await updateDoc(doc(db, `artifacts/${appId}/public/data/actuators`, id), { notes: newNotes }); }};
+        async function handleAddSparePart(id) { const actuator = state.actuators.find(a => a.id === id); const name = document.getElementById('newSparePartName').value; if(name.trim()){ const newSpareParts = { ...actuator.spareParts, toRequest: [...(actuator.spareParts?.toRequest || []), name] }; await updateDoc(doc(db, `artifacts/${appId}/public/data/actuators`, id), { spareParts: newSpareParts }); closeModal(); }};
+        async function handleMoveSparePart(id, params) { const {part, from, to} = params; const actuator = state.actuators.find(a => a.id === id); const sp = JSON.parse(JSON.stringify(actuator.spareParts)); sp[from] = (sp[from] || []).filter(p => p !== part); sp[to] = [...(sp[to] || []), part]; await updateDoc(doc(db, `artifacts/${appId}/public/data/actuators`, id), { spareParts: sp }); };
+        async function handleDeleteSparePart(id, params) { const {part, from} = params; if(confirm('¿Seguro?')) { const actuator = state.actuators.find(a => a.id === id); const sp = JSON.parse(JSON.stringify(actuator.spareParts)); sp[from] = (sp[from] || []).filter(p => p !== part); await updateDoc(doc(db, `artifacts/${appId}/public/data/actuators`, id), { spareParts: sp }); }};
+        async function handleAddWorkOrder(id) { const actuator = state.actuators.find(a => a.id === id); const desc = document.getElementById('newWorkOrderDesc').value; if(desc.trim()) { await addDoc(collection(db, `artifacts/${appId}/public/data/workOrders`), { actuatorId: id, actuatorTag: actuator.tag, description: desc, status: 'pendiente', createdAt: new Date().toISOString()}); closeModal(); }};
+        async function handleAddDocument(id) { const actuator = state.actuators.find(a => a.id === id); const name = document.getElementById('newDocName').value; if(name.trim()){ const newDocs = [...(actuator.documents || []), { name, url: '#' }]; await updateDoc(doc(db, `artifacts/${appId}/public/data/actuators`, id), { documents: newDocs }); closeModal(); }};
+        async function handleDeleteDocument(id, name) { if(confirm('¿Seguro?')) { const actuator = state.actuators.find(a => a.id === id); const newDocs = actuator.documents.filter(d => d.name !== name); await updateDoc(doc(db, `artifacts/${appId}/public/data/actuators`, id), { documents: newDocs }); }};
+
+        // --- INICIALIZACIÓN ---
+        function initializeAppLogic() {
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+            } catch (error) { console.error("Error inicializando Firebase:", error); state.loading = false; renderApp(); return; }
+            onAuthStateChanged(auth, async (firebaseUser) => {
+                if (!firebaseUser) { await signInAnonymously(auth).catch(e => console.error("Anonymous sign in failed", e)); return; }
+                if (state.loading) { await seedInitialData(); }
+                let dataLoaded = { areas: false, actuators: false, workOrders: false };
+                const checkAllDataLoaded = () => {
+                    if(dataLoaded.areas && dataLoaded.actuators && dataLoaded.workOrders && state.loading){
+                        state.loading = false;
+                        renderApp();
+                    }
+                };
+                onSnapshot(collection(db, `artifacts/${appId}/public/data/areas`), (s) => { state.areas = s.docs.map(d => ({ id: d.id, ...d.data() })); dataLoaded.areas = true; checkAllDataLoaded(); if(!state.loading) renderApp(); });
+                onSnapshot(collection(db, `artifacts/${appId}/public/data/actuators`), (s) => { state.actuators = s.docs.map(d => ({ id: d.id, ...d.data() })); dataLoaded.actuators = true; checkAllDataLoaded(); if(!state.loading) renderApp(); });
+                onSnapshot(collection(db, `artifacts/${appId}/public/data/workOrders`), (s) => { state.workOrders = s.docs.map(d => ({ id: d.id, ...d.data() })); dataLoaded.workOrders = true; checkAllDataLoaded(); if(!state.loading) renderApp(); });
+            });
+        }
+        
+        initializeAppLogic();
+        renderApp();
+    </script>
+</body>
+</html>
